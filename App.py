@@ -77,10 +77,10 @@ def analyze_pair(target, other):
     }
 
 if run_btn:
-    st.info(f"Fetching live data for {symbol} ... please wait up to 1 minute ⏳")
+    st.info(f"Fetching live data for {symbol} ...")
 
     import time
-now = int(time.time() * 1000)
+    now = int(time.time() * 1000)
     since = now - TIME_WINDOW_SEC * 1000
 
     # Target
