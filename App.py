@@ -3,11 +3,16 @@ import pandas as pd
 import numpy as np
 import ccxt
 from statsmodels.tsa.stattools import grangercausalitytests
+import time
 
+# --- Streamlit Setup ---
 st.set_page_config(page_title="Price Source Detector", layout="centered")
 
 st.title("🔍 Price Source Detector")
-st.markdown("This tool compares live crypto prices between exchanges to detect if one might be following another.")
+st.markdown(
+    "This tool compares live crypto prices between exchanges "
+    "to detect if one might be following another."
+)
 
 # --- User Input ---
 target_exchange = st.text_input("Target Exchange (e.g. kcex)", value="kcex").lower().strip()
@@ -19,19 +24,38 @@ CHECK_EXCHANGES = ['binance', 'okx', 'kucoin', 'bybit', 'gate', 'bitget', 'mexc'
 TIME_WINDOW_SEC = 180  # 3 minutes
 RESAMPLE_FREQ = '1S'
 
+# --- Fetch Live Price Data ---
 def fetch_prices(exchange, symbol, since):
     try:
-        ex = getattr(ccxt, exchange)({'enableRateLimit': True})
+        ex = getattr(ccxt, exchange.lower())({'enableRateLimit': True})
         ex.load_markets()
+
+        # Check if symbol exists
+        if symbol not in ex.markets:
+            st.warning(f"⚠️ {symbol} not found on {exchange}. Trying variations...")
+            alt_symbol = symbol.replace('/', '').upper()
+            possible = [s for s in ex.markets.keys() if s.replace('/', '').upper() == alt_symbol]
+            if possible:
+                symbol = possible[0]
+            else:
+                st.error(f"❌ {symbol} not available on {exchange}.")
+                return None
+
         trades = ex.fetch_trades(symbol, since=since, limit=500)
         if not trades:
+            st.warning(f"⚠️ No trade data found for {symbol} on {exchange}.")
             return None
+
         df = pd.DataFrame(trades)
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         return df.set_index('timestamp')['price'].resample(RESAMPLE_FREQ).last().ffill()
-    except Exception:
+
+    except Exception as e:
+        st.error(f"❌ Error fetching data from {exchange}: {e}")
         return None
 
+
+# --- Analyze Price Relationship ---
 def analyze_pair(target, other):
     df = pd.concat([target, other], axis=1).dropna()
     df.columns = ['target', 'other']
@@ -76,14 +100,15 @@ def analyze_pair(target, other):
         'score': score
     }
 
+
+# --- Main Logic ---
 if run_btn:
     st.info(f"Fetching live data for {symbol} ...")
 
-    import time
     now = int(time.time() * 1000)
     since = now - TIME_WINDOW_SEC * 1000
 
-    # Target
+    # Target exchange prices
     target_prices = fetch_prices(target_exchange, symbol, since)
     if target_prices is None or target_prices.empty:
         st.error("❌ Target exchange data not found. Try another symbol or exchange.")
@@ -104,8 +129,10 @@ if run_btn:
         st.error("⚠️ Could not find enough data to compare.")
     else:
         df = pd.DataFrame(results).sort_values('score', ascending=False)
-        st.success("✅ Analysis Complete!")
-        st.write("**Top likely price sources:**")
-        st.dataframe(df[['exchange', 'score', 'best_lag', 'best_corr', 'granger_p']].round(4))
+        st.success("✅ Analysis complete!")
+        st.dataframe(df)
         top = df.iloc[0]
-        st.markdown(f"👉 **Most likely price source:** `{top['exchange']}` (lag {top['best_lag']}s, corr {top['best_corr']:.2f})")
+        st.markdown(
+            f"**📊 Most likely leader:** `{top['exchange']}`  "
+            f"(corr={top['best_corr']:.3f}, lag={top['best_lag']}, p={top['granger_p']:.3f})"
+        )
